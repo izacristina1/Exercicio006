@@ -46,7 +46,14 @@ Cada execução mensal cria a pasta `AAAA-MM` e, dentro dela, um arquivo por
 1. `Inicializar variável` `varDataAtual` (String) =
    `convertTimeZone(utcNow(),'UTC','E. South America Standard Time','yyyy-MM-dd')`
 2. `Inicializar variável` `varPrimeiroDiaMes` (String) =
-   `concat(substring(variables('varDataAtual'),0,8),'01')`
+   `formatDateTime(startOfMonth(variables('varDataAtual')),'yyyy-MM-dd')`
+
+   > Isso é 100% dinâmico: `startOfMonth()` é a função nativa do Power
+   > Automate para "primeiro dia do mês de uma data" — não há nenhum dia
+   > fixo no fluxo. Ela recalcula a cada execução a partir de
+   > `varDataAtual` (que vem de `utcNow()`), então em agosto vira
+   > `2026-08-01`, em setembro `2026-09-01`, e assim por diante, sem
+   > precisar tocar no fluxo todo mês.
 3. `Inicializar variável` `varUltimoDiaMes` (String) =
    `formatDateTime(addDays(addToTime(variables('varPrimeiroDiaMes'),1,'Month'),-1),'yyyy-MM-dd')`
 4. **Obter itens** (SharePoint) — Site: `GRP-Site Services - Power Platform`
@@ -92,7 +99,8 @@ Cada execução mensal cria a pasta `AAAA-MM` e, dentro dela, um arquivo por
 
 11. `Compose` `varLinhasEstoque` = a saída acima (array de objetos com
     `Group_Type`, `Type`, `Manufacturer`, `Model`, `Serial Number`,
-    `Inventory Number`, `Status`, `Sub Region`, `Location`).
+    `Inventory Number`, `Status`, `Sub Region`, `Location`, `Region`,
+    `UserName`).
 
 ### Bloco 4 — Regiões distintas
 
@@ -129,11 +137,36 @@ Para cada `item()` (nome da `Sub Region`):
     condição: `item()?['Sub Region']` é igual a `item()` (região do loop
     atual).
 
-18. **Run script** (Excel Online Business)
+18. **Select** `varLinhasFormatadas` — a partir de `body('Filter_array_varLinhasRegiao')`,
+    remapeia cada linha para o formato exigido pela interface `LinhaEstoque`
+    do script (chaves sem espaço, e as 4 colunas manuais fixas em `""`):
+
+    | Chave de saída | Valor (conteúdo do mapa) |
+    |---|---|
+    | `Group_Type` | `item()?['Group_Type']` |
+    | `Type` | `item()?['Type']` |
+    | `Manufacturer` | `item()?['Manufacturer']` |
+    | `Model` | `item()?['Model']` |
+    | `SerialNumber` | `item()?['Serial Number']` |
+    | `InventoryNumber` | `item()?['Inventory Number']` |
+    | `Status` | `item()?['Status']` |
+    | `EstaEmEstoque` | `""` |
+    | `StatusAtual` | `""` |
+    | `Chamado` | `""` |
+    | `Comentarios` | `""` |
+    | `SubRegion` | `item()?['Sub Region']` |
+    | `Location` | `item()?['Location']` |
+    | `Region` | `item()?['Region']` |
+    | `UserName` | `item()?['UserName']` |
+
+19. **Run script** (Excel Online Business)
     - Localização/Documento: arquivo criado no passo 16 (usar o `Id` do
       item retornado por "Copiar arquivo").
-    - Script: `../scripts/PopularArquivoEstoque.ts`.
-    - Parâmetro `dadosJson`: `string(body('Filter_array_varLinhasRegiao'))`
+    - Script: `../scripts/PopularArquivoEstoque.ts` (planilha `Referencia`,
+      tabela `Table1`).
+    - Parâmetro `linhas`: `body('Select_varLinhasFormatadas')` (o conector
+      reconhece o array pelo schema da interface `LinhaEstoque` — não é
+      necessário serializar para string).
 
 ### Bloco 7 — Link de compartilhamento (15 dias, escopo organização)
 
@@ -141,7 +174,7 @@ Como o Graph exige duas chamadas para link com expiração + escopo
 organização, isso é feito **uma vez**, para a pasta do mês inteira (todos os
 arquivos de região ficam acessíveis por esse único link) — depois do loop.
 
-19. **Enviar uma solicitação HTTP com o Azure AD** (conector Premium)
+20. **Enviar uma solicitação HTTP com o Azure AD** (conector Premium)
     - Método: `POST`
     - URI: `https://graph.microsoft.com/v1.0/drives/{drive-id}/items/{folder-item-id}/createLink`
       (obter `drive-id` e `folder-item-id` a partir da saída de "Criar nova
@@ -153,7 +186,7 @@ arquivos de região ficam acessíveis por esse único link) — depois do loop.
     - Saída relevante: `body('Criar_link')?['id']` (id da permission) e
       `body('Criar_link')?['link']?['webUrl']`.
 
-20. **Enviar uma solicitação HTTP com o Azure AD** — define a expiração:
+21. **Enviar uma solicitação HTTP com o Azure AD** — define a expiração:
     - Método: `PATCH`
     - URI: `https://graph.microsoft.com/v1.0/drives/{drive-id}/items/{folder-item-id}/permissions/@{body('Criar_link')?['id']}`
     - Corpo:
@@ -163,14 +196,11 @@ arquivos de região ficam acessíveis por esse único link) — depois do loop.
 
 ### Bloco 8 — E-mail único
 
-21. **Obter itens** (SharePoint) — lista `ConfigDestinatariosEstoque`
-    (ver `../README.md` → "Configuração de destinatários") para montar a
-    lista de e-mails.
-22. `Compose` `varDestinatarios` = `join(body('Obter_itens_destinatarios')?['value'], ';')`
-    (usar a expressão adequada para extrair a coluna `Email` de cada item,
-    ex.: via `Select` antes do `join`).
-23. **Enviar um e-mail (V2)** (Office 365 Outlook)
-    - Para: `outputs('Compose_varDestinatarios')`
+Sem lista de configuração — o destinatário é fixo, o grupo
+`GRP-powerplatformuser@ldcom365.onmicrosoft.com`.
+
+22. **Enviar um e-mail (V2)** (Office 365 Outlook)
+    - Para: `GRP-powerplatformuser@ldcom365.onmicrosoft.com`
     - Assunto: `Controle de Estoque - @{formatDateTime(variables('varPrimeiroDiaUtil'),'MM/yyyy')}`
     - Corpo (HTML): explica que os arquivos por região do mês estão na
       pasta, inclui `@{body('Criar_link')?['link']?['webUrl']}` e informa
