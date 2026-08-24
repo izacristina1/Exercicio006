@@ -180,42 +180,157 @@ Por fim, uma ação de **Condição** compara: **a data de hoje é igual ao
 
 ## Parte 3 — Buscar os dados no Power BI
 
-1. Adicione a ação **"Executar uma consulta no dataset"** (ação do Power
-   BI).
-2. Escolha o Workspace e o Dataset onde está a tabela
-   `ALL ASSETS - ENVIO DE CONTROLE DE ESTOQUE`.
-3. Cole a consulta pronta que está em `dax/consulta_estoque.dax` — ela já
-   está escrita para trazer só as colunas necessárias.
-4. O resultado dessa ação é a lista completa de itens de estoque, de todas
-   as regiões juntas.
-5. Em seguida, o fluxo separa as regiões que aparecem nessa lista (sem
-   repetir), para saber quantos arquivos vai precisar criar.
+### 3.1 — Perguntar ao Power BI quais itens existem
+
+Adicione a ação **"Executar uma consulta no dataset"** (é uma ação do
+conector Power BI — procure por "Power BI" na busca de ações).
+
+Pense nessa ação como **fazer uma pergunta pronta para a sua tabela do
+Power BI**, do tipo "me devolve todos os itens, com estas colunas: tipo,
+fabricante, modelo, número de série, região, local...". Essa "pergunta" é
+escrita numa linguagem específica (chamada DAX), mas você **não precisa
+escrever isso do zero** — já está pronta em `dax/consulta_estoque.dax`,
+é só copiar e colar no campo da ação.
+
+**Como configurar:**
+1. Escolha, nos campos da ação, o **Workspace** e o **Dataset** onde a
+   tabela `ALL ASSETS - ENVIO DE CONTROLE DE ESTOQUE` está publicada.
+2. Cole a consulta de `dax/consulta_estoque.dax` no campo de texto da
+   consulta.
+
+O que volta dessa ação é uma tabela completa, tipo uma planilha, com uma
+linha por item de estoque, de **todas as regiões misturadas**:
+
+| Group_Type | Type | ... | Sub Region | Location |
+|---|---|---|---|---|
+| Notebook | Ativo | ... | Sul | Porto Alegre |
+| Monitor | Ativo | ... | Sul | Curitiba |
+| Notebook | Ativo | ... | Norte | Manaus |
+| ... | ... | ... | ... | ... |
+
+### 3.2 — Descobrir quais regiões apareceram, sem repetir
+
+Precisamos saber quantas regiões diferentes existem nessa tabela, para
+saber quantos arquivos criar (um por região). O problema: a coluna
+`Sub Region` vem **repetida** — cada item de estoque é uma linha, e várias
+linhas são da mesma região.
+
+**Passo A** — use a ação **"Selecionar"** de novo (a mesma explicada na
+Parte 2), agora pegando só a coluna `Sub Region` de cada linha. Isso já
+reduz a tabela a uma lista de nomes de região, mas ainda com repetição:
+
+```
+["Sul", "Sul", "Norte", "Sul", "Sudeste", "Norte", ...]
+```
+
+**Passo B** — para tirar as repetições, use uma ação **"Inicializar
+variável"** com a fórmula:
+
+```
+union(nome_da_lista_do_passo_A, nome_da_lista_do_passo_A)
+```
+
+Isso parece estranho ("juntar a lista com ela mesma"?), mas é um truque
+conhecido do Power Automate: a função `union` junta duas listas **sem
+deixar repetição** de algo que já existe nas duas. Como as duas listas
+aqui são a mesma, tudo já existe nas duas — e o que sobra é a lista sem
+repetição:
+
+```
+["Sul", "Norte", "Sudeste"]
+```
+
+Essa lista final (3 regiões, no exemplo) é o que decide quantos arquivos
+serão criados na Parte 4.
 
 ## Parte 4 — Um arquivo por região
 
-Para cada região encontrada, o fluxo repete estes 3 passos:
+Aqui usamos uma ação chamada **"Aplicar a cada"** ("Apply to each"). Ela
+funciona como um "para cada item desta lista, repita os passos abaixo" —
+nesse caso, a lista é a lista de regiões sem repetição da Parte 3.2. Se
+deram 3 regiões, esses passos rodam 3 vezes, uma para cada.
 
-1. **Copia o arquivo modelo** para dentro da pasta do mês, já com o nome
-   da região (ex.: `Sul_2026-08.xlsx`).
-2. **Separa, dos dados do Power BI, só as linhas daquela região.**
-3. **Roda o script** `PopularArquivoEstoque.ts` nesse arquivo recém-criado,
-   passando essas linhas — o script escreve tudo na planilha `Referencia`,
-   tabela `Table1`, e deixa em branco as 4 colunas que são preenchidas à
-   mão (`ESTA EM ESTOQUE?`, `STATUS ATUAL`, `CHAMADO`, `COMENTARIOS`).
+Dentro do "Aplicar a cada", para a região da vez, acontece isto:
 
-No fim dessa parte, a pasta do mês já está com um arquivo pronto para cada
-região.
+### 4.1 — Copiar o arquivo modelo
+
+Ação **"Copiar arquivo"** (SharePoint). É basicamente um Ctrl+C / Ctrl+V
+automático: pega o `Arquivo_Modelo_-_Controle_de_Estoque.xlsx` e salva uma
+cópia dentro da pasta do mês, já com o nome da região no arquivo — por
+exemplo, para a região "Sul" em agosto de 2026, o arquivo vira
+`Sul_2026-08.xlsx`.
+
+### 4.2 — Separar só os itens dessa região
+
+Ação **"Filtrar matriz"** ("Filter array"). Pega a tabela inteira de itens
+(todas as regiões, da Parte 3.1) e devolve só as linhas onde
+`Sub Region` é igual à região da vez. Por exemplo, se a tabela tem 50
+itens no total e 12 deles são da região "Sul", o resultado dessa ação —
+quando a região da vez for "Sul" — é uma listinha com só esses 12 itens.
+
+### 4.3 — Ajustar os nomes dos campos para o script entender
+
+O script que preenche o arquivo (`PopularArquivoEstoque.ts`) espera que
+cada item chegue com nomes de campo **sem espaço**, tipo `SerialNumber` em
+vez de `Serial Number`. Mas os dados que vieram do Power BI usam nomes
+**com espaço**, tipo `Serial Number`. Então, antes de chamar o script, usamos
+mais uma ação **"Selecionar"** só para "traduzir" os nomes:
+
+| Campo como vem do Power BI | Campo que o script espera |
+|---|---|
+| `Serial Number` | `SerialNumber` |
+| `Inventory Number` | `InventoryNumber` |
+| `Sub Region` | `SubRegion` |
+| (não existe) | `EstaEmEstoque` → deixamos como `""` (vazio) |
+| (não existe) | `StatusAtual` → `""` (vazio) |
+| (não existe) | `Chamado` → `""` (vazio) |
+| (não existe) | `Comentarios` → `""` (vazio) |
+
+As colunas `EstaEmEstoque`, `StatusAtual`, `Chamado` e `Comentarios` são
+justamente as 4 que ficam em branco de propósito, para quem recebe o
+arquivo preencher à mão depois.
+
+### 4.4 — Rodar o script que escreve no arquivo
+
+Ação **"Executar script"** ("Run script", do conector Excel Online
+Business). Pense nela como apertar um botão que diz: **"Excel, abre esse
+arquivo que acabei de copiar e roda esse programinha aqui dentro, usando
+esses dados que preparei."** O programinha é o `PopularArquivoEstoque.ts`
+que você já tem pronto — ele escreve cada item na planilha `Referencia`,
+tabela `Table1`.
+
+No fim da Parte 4, a pasta do mês já está com um arquivo Excel pronto para
+cada região, todos já preenchidos.
 
 ## Parte 5 — Link e e-mail
 
-1. O fluxo cria um **link de compartilhamento da pasta do mês inteira**
-   (não um link por arquivo — um só, que dá acesso a todos os arquivos de
-   região daquele mês).
-2. Esse link é configurado para:
-   - só funcionar para quem está logado na empresa (não é um link público);
-   - **expirar sozinho em 15 dias**.
-3. O fluxo manda **um e-mail** para `GRP-powerplatformuser@ldcom365.onmicrosoft.com`
-   com esse link e avisando a data em que ele deixa de funcionar.
+### 5.1 — Criar o link de acesso, válido por 15 dias
+
+O SharePoint tem um botão comum de "Compartilhar" que gera um link, mas
+ele **não tem a opção de "esse link expira em 15 dias"** pronta na tela.
+Por isso, essa parte é feita com duas ações mais técnicas, chamadas
+**"Enviar uma solicitação HTTP com o Azure AD"** — pense nelas como "duas
+perguntas diretas para os bastidores do Microsoft 365":
+
+1. A primeira pergunta pede: **"crie um link de acesso para esta pasta,
+   que só funcione para gente da empresa (ninguém de fora)."**
+2. A segunda pergunta pede: **"nesse link que você acabou de criar, define
+   que ele para de funcionar em 15 dias."**
+
+Você não precisa entender a "sintaxe" dessas duas chamadas para acompanhar
+a ideia — só saber que são elas que garantem as duas regras que você
+pediu: link só para dentro da empresa, e válido por 15 dias. As chamadas
+exatas, prontas para copiar, estão em `flow/fluxo-envio-estoque.md`,
+Bloco 7.
+
+### 5.2 — Mandar o e-mail
+
+Ação **"Enviar um e-mail (V2)"** (Outlook). A parte mais simples de todas:
+- Para: `GRP-powerplatformuser@ldcom365.onmicrosoft.com`
+- Assunto: algo como "Controle de Estoque - 08/2026"
+- Corpo: um texto avisando que os arquivos do mês estão prontos, com o
+  link criado no passo 5.1, e a data em que esse link vai parar de
+  funcionar (hoje + 15 dias).
 
 Pronto — esse é o ciclo completo, que se repete todo mês sozinho.
 
