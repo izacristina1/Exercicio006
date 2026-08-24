@@ -1,0 +1,21 @@
+// Consulta DAX usada na ação Premium "Run a query against a dataset" (Power BI)
+// dentro do fluxo do Power Automate. Retorna somente as colunas necessárias
+// para popular o Arquivo_Modelo_-_Controle_de_Estoque.xlsx.
+//
+// Ajuste o nome da tabela caso o dataset publicado use um alias diferente de
+// "ALL ASSETS - ENVIO DE CONTROLE DE ESTOQUE".
+
+EVALUATE
+SELECTCOLUMNS(
+    'ALL ASSETS - ENVIO DE CONTROLE DE ESTOQUE',
+    "Group_Type", 'ALL ASSETS - ENVIO DE CONTROLE DE ESTOQUE'[Group_Type],
+    "Type", 'ALL ASSETS - ENVIO DE CONTROLE DE ESTOQUE'[Type],
+    "Manufacturer", 'ALL ASSETS - ENVIO DE CONTROLE DE ESTOQUE'[Manufacturer],
+    "Model", 'ALL ASSETS - ENVIO DE CONTROLE DE ESTOQUE'[Model],
+    "Serial Number", 'ALL ASSETS - ENVIO DE CONTROLE DE ESTOQUE'[Serial Number],
+    "Inventory Number", 'ALL ASSETS - ENVIO DE CONTROLE DE ESTOQUE'[Inventory Number],
+    "Status", 'ALL ASSETS - ENVIO DE CONTROLE DE ESTOQUE'[Status],
+    "Sub Region", 'ALL ASSETS - ENVIO DE CONTROLE DE ESTOQUE'[Sub Region],
+    "Location", 'ALL ASSETS - ENVIO DE CONTROLE DE ESTOQUE'[Location]
+)
+ORDER BY [Sub Region], [Location]
