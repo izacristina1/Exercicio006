@@ -57,21 +57,123 @@ link que expira sozinho em 15 dias.
 
 ## Parte 2 — Descobrir se hoje é o dia de enviar
 
-Aqui o fluxo faz 3 coisas, nessa ordem:
+A ideia geral, sem nenhum termo técnico: **o fluxo pega o dia 1 do mês e vai
+perguntando "esse dia serve?" até achar um dia de semana que não seja
+feriado.** Achou, esse é o dia de enviar. Abaixo está o passo a passo de
+como isso é montado, bem devagar.
 
-1. **Calcula o 1º dia do mês atual** — usando a data de hoje (nunca uma
-   data fixa; muda sozinho todo mês).
-2. **Consulta a lista de feriados** — a lista `FeriadosNacionais` do site
-   `GRP-Site Services - Power Platform` (coluna `Date`), pegando os
-   feriados só do mês atual.
-3. **Vai avançando dia a dia** a partir do 1º dia do mês até achar um dia
-   que não seja fim de semana e não seja feriado. Esse é o "dia de enviar".
+### 2.1 — Descobrir qual é o dia 1 do mês atual
 
-Depois disso, o fluxo compara: **a data de hoje é igual ao "dia de
-enviar"?**
-- Se **não for**, o fluxo simplesmente para por aqui (não faz mais nada
-  hoje — amanhã ele roda de novo e testa outra vez).
-- Se **for**, ele continua para a Parte 3.
+Uma ação (`Inicializar variável`) guarda a data de hoje. Outra ação pega só
+o "ano e mês" dessa data e monta o dia 1 — por exemplo, se hoje é
+24/08/2026, essa conta dá 01/08/2026. Isso é recalculado sozinho todo mês,
+nunca é um valor fixo digitado por alguém.
+
+### 2.2 — Buscar a lista de feriados do mês
+
+Uma ação **"Obter itens"** vai até a lista `FeriadosNacionais` (no site
+`GRP-Site Services - Power Platform`) e traz de volta as linhas dessa lista
+cujo campo `Date` cai dentro do mês atual. Pense nisso como um "Ctrl+F" que
+filtra a lista de feriados e te devolve só os do mês em questão.
+
+O problema é que o que volta dessa busca não é uma lista simples de datas —
+é uma lista de **linhas inteiras** da tabela de feriados, cada uma com
+várias colunas (título do feriado, quem cadastrou, etc.) e a data vem num
+formato cheio de informação extra, tipo `2026-04-21T00:00:00Z` (tem a hora
+e o fuso junto). Para o próximo passo, a gente só quer uma listinha limpa
+de datas, tipo `2026-04-21`. É para isso que serve o próximo passo.
+
+### 2.3 — Transformar a lista de feriados numa listinha simples de datas
+
+Aqui entra a ação **"Selecionar"** (em inglês aparece como "Select"). Ela
+fica em **Operações de Dados** quando você procura por uma nova ação.
+
+**O que essa ação faz, em palavras simples:** ela passa por cada linha da
+lista de feriados, uma de cada vez, e você diz "de cada linha, eu só quero
+essa informação aqui, formatada assim". No fim, ela te devolve uma lista
+nova, só com o que você pediu — bem mais simples que a lista original.
+
+**Exemplo prático**, com dados inventados só para ilustrar:
+
+| Antes (o que veio do SharePoint) | Depois (o que a ação "Selecionar" devolve) |
+|---|---|
+| Linha 1: Título = "Tiradentes", Date = `2026-04-21T00:00:00Z`, (+ outras colunas) | `"2026-04-21"` |
+| Linha 2: Título = "Dia do Trabalho", Date = `2026-05-01T00:00:00Z`, (+ outras colunas) | `"2026-05-01"` |
+
+Ou seja: de uma lista "pesada" com várias colunas por feriado, sobra uma
+lista simples de textos com só a data, no formato ano-mês-dia. É essa lista
+simples (`varFeriados`) que o fluxo vai usar depois para perguntar
+"esse dia que estou testando é feriado?".
+
+**Como configurar na tela:**
+1. Adicione a ação **"Selecionar"**.
+2. No campo **"De"**, escolha (no menu de conteúdo dinâmico) o resultado da
+   ação "Obter itens" do passo 2.2 — ou seja, "de onde eu vou tirar a
+   informação".
+3. Troque o campo de baixo para o **modo de texto** (tem um botãozinho de
+   alternar formato, geralmente com ícone de raio ⚡ ao lado do campo, ou a
+   opção "Alternar para modo de entrada de texto"). Isso muda o campo de
+   "pares chave/valor" para um campo único de texto.
+4. Nesse campo único, você escreve a "receita" de como transformar cada
+   linha. A receita usada aqui é:
+
+   ```
+   formatDateTime(item()?['Date'],'yyyy-MM-dd')
+   ```
+
+   Traduzindo essa receita pedaço por pedaço:
+   - `item()` = "a linha que estou olhando agora" (a ação repete essa
+     receita para cada linha da lista, uma de cada vez).
+   - `item()?['Date']` = "pega o valor da coluna chamada `Date` dessa
+     linha".
+   - `formatDateTime( ... , 'yyyy-MM-dd')` = "reescreve essa data no
+     formato ano-mês-dia, sem hora e sem fuso".
+
+5. Salve. O resultado dessa ação (chame de `varFeriados`) já é a listinha
+   simples de datas do exemplo acima.
+
+### 2.4 — Ir testando dia por dia até achar um dia útil
+
+Agora o fluxo faz um "loop" — ou seja, repete um teste várias vezes até
+achar a resposta certa. A ação chamada **"Fazer até"** ("Do until") serve
+para isso: ela repete os passos de dentro dela até uma condição virar
+verdadeira.
+
+Em palavras simples, o fluxo faz assim:
+
+1. Começa testando o dia 1 do mês (calculado no passo 2.1).
+2. Pergunta: **esse dia é sábado ou domingo? OU ele está dentro da
+   listinha de feriados (`varFeriados`) que montamos no passo 2.3?**
+   - Se a resposta for **sim** (é fim de semana ou é feriado): esse dia
+     não serve. O fluxo soma 1 dia (testa o dia seguinte) e volta a fazer
+     a mesma pergunta.
+   - Se a resposta for **não** (não é fim de semana nem feriado): achou!
+     Esse é o dia de enviar, e o fluxo para de repetir.
+
+**Exemplo imaginário** para deixar bem concreto: suponha que o dia 1 de um
+mês caia num sábado, e o dia 3 (que seria terça) esteja cadastrado como
+feriado na lista:
+
+| Dia testado | É fim de semana? | É feriado? | Serve? |
+|---|---|---|---|
+| Dia 1 (sábado) | Sim | — | Não → testa o dia 2 |
+| Dia 2 (domingo) | Sim | — | Não → testa o dia 3 |
+| Dia 3 (terça, feriado) | Não | Sim | Não → testa o dia 4 |
+| Dia 4 (quarta) | Não | Não | **Sim → esse é o dia de enviar!** |
+
+Isso é exatamente o que a fórmula técnica faz — só que escrita numa
+linguagem que o Power Automate entende. Se quiser ver essa fórmula exata
+para copiar e colar, ela está em `flow/fluxo-envio-estoque.md`, Bloco 1.
+
+### 2.5 — Só continuar se hoje for o dia certo
+
+Por fim, uma ação de **Condição** compara: **a data de hoje é igual ao
+"dia de enviar" que acabamos de descobrir?**
+- **Não** → o fluxo para por aqui mesmo (ação "Terminar"). Não manda nada
+  hoje. Amanhã ele roda de novo (lembra, ele roda todo dia) e testa de
+  novo com a nova data.
+- **Sim** → o fluxo segue para a Parte 3, que é onde de fato busca os
+  dados e manda os arquivos.
 
 > As fórmulas exatas dessa parte (um pouco mais técnicas) estão no
 > `flow/fluxo-envio-estoque.md`, Bloco 1 e Bloco 2.
