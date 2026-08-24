@@ -4,6 +4,11 @@ Desenho de implementação para o Power Automate (licença Premium) que envia,
 no 1º dia útil de cada mês, um arquivo Excel de controle de estoque por
 região, com um link de compartilhamento válido por 15 dias.
 
+**Começe por aqui:** [`GUIA-FACIL.md`](./GUIA-FACIL.md) — o passo a passo em
+linguagem simples, sem jargão técnico. Os outros arquivos deste pacote
+(`flow/`, `dax/`, `scripts/`) são a referência técnica com os nomes de
+campos e fórmulas exatas, para quando for de fato montar o fluxo.
+
 ## Objetivo
 
 - Fonte dos dados: tabela **`ALL ASSETS - ENVIO DE CONTROLE DE ESTOQUE`**
